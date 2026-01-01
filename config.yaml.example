@@ -1,0 +1,35 @@
+# Notion Lite MCP Configuration
+# Copy to config.yaml and edit with your page IDs
+
+# Pre-seed cache with commonly-used pages
+# Find IDs in Notion URLs or via search
+cache_seed:
+  - name: COLLECT
+    id: 28e0b827f2338013846de7a6257a4480
+    type: page
+    path: Insights/COLLECT
+
+  - name: Receipt Tracker
+    id: 8b431394-c095-4259-95c5-fc1a127a873a
+    type: database
+    path: FRUGAL/Receipt Tracker
+
+  - name: Podcasts Queue
+    id: c97a3c99-a270-4bc8-a7f7-761df54c6474
+    type: database
+    path: WISE/Podcasts Queue
+
+  - name: Tax & ZUS
+    id: e75c1c1e-3ca4-46ad-a4b6-c2c383ff6824
+    type: database
+    path: FRUGAL/Tax & ZUS
+
+  - name: Work Tech Notes
+    id: 28e0b827-f233-81dc-bc6c-f6c1873728f7
+    type: page
+    path: WORK/Work Tech Notes
+
+  - name: Logs
+    id: 27f0b827f23381ad9f7dea93b1452f78
+    type: page
+    path: Logs
