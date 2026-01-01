@@ -28,8 +28,11 @@ async def search(query: str, filter_type: str | None = None) -> list[dict[str, A
     client = get_client()
 
     params: dict[str, Any] = {"query": query}
-    if filter_type in ("page", "database"):
-        params["filter"] = {"property": "object", "value": filter_type}
+    if filter_type == "page":
+        params["filter"] = {"property": "object", "value": "page"}
+    elif filter_type == "database":
+        # API now uses "data_source" instead of "database"
+        params["filter"] = {"property": "object", "value": "data_source"}
 
     response = await client.search(**params)
     return response.get("results", [])
@@ -134,17 +137,6 @@ async def delete_block(block_id: str) -> dict[str, Any]:
     return await client.blocks.delete(block_id=block_id)
 
 
-async def move_page(page_id: str, new_parent_id: str, is_database: bool = False) -> dict[str, Any]:
-    """Move a page to a new parent.
-
-    Note: Notion API doesn't support changing page parents.
-    """
-    raise NotImplementedError(
-        "Notion API does not support moving pages. "
-        "Use the web UI or recreate the page under the new parent."
-    )
-
-
 async def query_database(
     database_id: str,
     filter_obj: dict[str, Any] | None = None,
@@ -157,8 +149,9 @@ async def query_database(
     cursor = None
 
     while len(results) < limit:
-        params = _build_query_params(database_id, filter_obj, sorts, cursor)
-        response = await client.databases.query(**params)
+        params = _build_query_params(filter_obj, sorts, cursor)
+        # Notion API now uses data_sources endpoint for database queries
+        response = await client.data_sources.query(data_source_id=database_id, **params)
         results.extend(response.get("results", []))
 
         if not response.get("has_more"):
@@ -169,13 +162,12 @@ async def query_database(
 
 
 def _build_query_params(
-    database_id: str,
     filter_obj: dict[str, Any] | None,
     sorts: list[dict[str, Any]] | None,
     cursor: str | None,
 ) -> dict[str, Any]:
     """Build query parameters for database query."""
-    params: dict[str, Any] = {"database_id": database_id}
+    params: dict[str, Any] = {}
     if filter_obj:
         params["filter"] = filter_obj
     if sorts:
@@ -188,7 +180,8 @@ def _build_query_params(
 async def get_database(database_id: str) -> dict[str, Any]:
     """Get database metadata and schema."""
     client = get_client()
-    return await client.databases.retrieve(database_id=database_id)
+    # Notion API now uses data_sources endpoint
+    return await client.data_sources.retrieve(data_source_id=database_id)
 
 
 async def update_database(
@@ -199,10 +192,11 @@ async def update_database(
     """Update database title or properties schema."""
     client = get_client()
 
-    params: dict[str, Any] = {"database_id": database_id}
+    params: dict[str, Any] = {}
     if title:
         params["title"] = [{"text": {"content": title}}]
     if properties:
         params["properties"] = properties
 
-    return await client.databases.update(**params)
+    # Notion API now uses data_sources endpoint
+    return await client.data_sources.update(data_source_id=database_id, **params)

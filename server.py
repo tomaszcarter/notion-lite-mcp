@@ -89,18 +89,6 @@ TOOLS = [
         },
     ),
     types.Tool(
-        name="move_page",
-        description="Move page to new parent.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "id": {"type": "string", "description": "Page ID or cached name"},
-                "parent": {"type": "string", "description": "New parent ID or cached name"},
-            },
-            "required": ["id", "parent"],
-        },
-    ),
-    types.Tool(
         name="query_database",
         description="Query database with filters.",
         inputSchema={
@@ -289,27 +277,6 @@ async def _handle_delete_page(args: dict[str, Any]) -> list[types.TextContent]:
     return _text_response(f"Archived page {resolved_id}")
 
 
-async def _handle_move_page(args: dict[str, Any]) -> list[types.TextContent]:
-    """Move page to new parent."""
-    page_id = args.get("id", "")
-    new_parent = args.get("parent", "")
-
-    if not page_id or not new_parent:
-        raise ValueError("id and parent are required")
-
-    resolved_id = await cache.resolve_id(page_id)
-    parent_id = await cache.resolve_id(new_parent)
-
-    cached_parent = await cache.get_by_name(new_parent)
-    is_database = cached_parent and cached_parent.get("type") == "database"
-
-    try:
-        await notion_api.move_page(resolved_id, parent_id, is_database)
-        return _text_response(f"Moved page {resolved_id} to {parent_id}")
-    except NotImplementedError as e:
-        return _text_response(str(e))
-
-
 async def _handle_query_database(args: dict[str, Any]) -> list[types.TextContent]:
     """Query a database."""
     db_id = args.get("id", "")
@@ -376,7 +343,6 @@ TOOL_HANDLERS: dict[str, Callable[[dict[str, Any]], Coroutine[Any, Any, list[typ
     "create_page": _handle_create_page,
     "update_page": _handle_update_page,
     "delete_page": _handle_delete_page,
-    "move_page": _handle_move_page,
     "query_database": _handle_query_database,
     "update_database": _handle_update_database,
 }
