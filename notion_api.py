@@ -81,7 +81,12 @@ async def create_page(
     """Create a new page under a page or database."""
     client = get_client()
 
-    parent, page_properties = _build_page_params(parent_id, title, properties, is_database)
+    # Detect if parent_id is a data_source_id vs database_id
+    is_data_source = await _is_data_source_id(parent_id) if is_database else False
+
+    parent, page_properties = _build_page_params(
+        parent_id, title, properties, is_database, is_data_source
+    )
 
     params: dict[str, Any] = {"parent": parent, "properties": page_properties}
     if children:
@@ -90,15 +95,38 @@ async def create_page(
     return await client.pages.create(**params)
 
 
+async def _is_data_source_id(id: str) -> bool:
+    """Check if an ID is a data_source_id (vs database_id)."""
+    client = get_client()
+    try:
+        await client.data_sources.retrieve(data_source_id=id)
+        return True
+    except Exception:
+        return False
+
+
 def _build_page_params(
     parent_id: str,
     title: str,
     properties: dict[str, Any] | None,
     is_database: bool,
+    is_data_source: bool = False,
 ) -> tuple[dict[str, str], dict[str, Any]]:
-    """Build parent and properties params for page creation."""
+    """Build parent and properties params for page creation.
+
+    Args:
+        parent_id: The ID of the parent page/database/data_source
+        title: Title for the new page
+        properties: Pre-formatted properties (for database entries)
+        is_database: True if creating in a database
+        is_data_source: True if parent_id is a data_source_id (vs database_id)
+    """
     if is_database:
-        parent = {"database_id": parent_id}
+        # Use correct parent key based on ID type
+        if is_data_source:
+            parent = {"data_source_id": parent_id}
+        else:
+            parent = {"database_id": parent_id}
         # When properties are provided, assume caller has set up title correctly
         # (server.py uses _format_properties_for_db which handles title)
         page_properties = properties or {}

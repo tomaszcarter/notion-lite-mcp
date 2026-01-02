@@ -101,3 +101,25 @@ class TestBuildPageParams:
         # Page always uses fixed title structure
         assert props == {"title": {"title": [{"text": {"content": "Test"}}]}}
         assert "ignored" not in props
+
+    def test_database_uses_database_id_by_default(self):
+        """Database parent uses database_id key by default."""
+        parent, props = _build_page_params(
+            parent_id="abc123",
+            title="Test",
+            properties=None,
+            is_database=True,
+            is_data_source=False,
+        )
+        assert parent == {"database_id": "abc123"}
+
+    def test_data_source_uses_data_source_id(self):
+        """Data source parent uses data_source_id key."""
+        parent, props = _build_page_params(
+            parent_id="abc123",
+            title="Test",
+            properties={"Title": {"title": [{"text": {"content": "Test"}}]}},
+            is_database=True,
+            is_data_source=True,
+        )
+        assert parent == {"data_source_id": "abc123"}
