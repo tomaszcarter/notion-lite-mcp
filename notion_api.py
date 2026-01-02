@@ -99,8 +99,11 @@ def _build_page_params(
     """Build parent and properties params for page creation."""
     if is_database:
         parent = {"database_id": parent_id}
+        # When properties are provided, assume caller has set up title correctly
+        # (server.py uses _format_properties_for_db which handles title)
         page_properties = properties or {}
-        if "title" not in page_properties and DEFAULT_TITLE_PROPERTY not in page_properties:
+        if not properties:
+            # Only add default title if no properties were provided
             page_properties[DEFAULT_TITLE_PROPERTY] = _make_title_property(title)
     else:
         parent = {"page_id": parent_id}
@@ -145,13 +148,16 @@ async def query_database(
 ) -> list[dict[str, Any]]:
     """Query a database with optional filter and sort."""
     client = get_client()
+
+    # Resolve to data_source_id if needed
+    data_source_id = await _resolve_data_source_id(database_id)
+
     results: list[dict[str, Any]] = []
     cursor = None
 
     while len(results) < limit:
         params = _build_query_params(filter_obj, sorts, cursor)
-        # Notion API now uses data_sources endpoint for database queries
-        response = await client.data_sources.query(data_source_id=database_id, **params)
+        response = await client.data_sources.query(data_source_id=data_source_id, **params)
         results.extend(response.get("results", []))
 
         if not response.get("has_more"):
@@ -159,6 +165,26 @@ async def query_database(
         cursor = response.get("next_cursor")
 
     return results[:limit]
+
+
+async def _resolve_data_source_id(database_id: str) -> str:
+    """Resolve a database_id to its data_source_id."""
+    client = get_client()
+
+    # First try as data_source_id directly
+    try:
+        await client.data_sources.retrieve(data_source_id=database_id)
+        return database_id
+    except Exception:
+        pass
+
+    # It's a database_id, get the data_source from it
+    db = await client.databases.retrieve(database_id=database_id)
+    data_sources = db.get("data_sources", [])
+    if data_sources:
+        return data_sources[0].get("id")
+
+    raise ValueError(f"No data source found for database {database_id}")
 
 
 def _build_query_params(
@@ -178,10 +204,29 @@ def _build_query_params(
 
 
 async def get_database(database_id: str) -> dict[str, Any]:
-    """Get database metadata and schema."""
+    """Get database metadata and schema.
+
+    Handles the Notion API's database/data_source distinction:
+    - database_id: The container (from URL)
+    - data_source_id: Where properties/data live
+    """
     client = get_client()
-    # Notion API now uses data_sources endpoint
-    return await client.data_sources.retrieve(data_source_id=database_id)
+
+    # First try as data_source_id (for backwards compatibility with cached IDs)
+    try:
+        return await client.data_sources.retrieve(data_source_id=database_id)
+    except Exception:
+        pass
+
+    # Try as database_id, then get the data_source
+    db = await client.databases.retrieve(database_id=database_id)
+    data_sources = db.get("data_sources", [])
+    if not data_sources:
+        return db  # Return database info even without data sources
+
+    # Get the first data source for schema/properties
+    data_source_id = data_sources[0].get("id")
+    return await client.data_sources.retrieve(data_source_id=data_source_id)
 
 
 async def update_database(

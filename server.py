@@ -208,7 +208,14 @@ async def _handle_create_page(args: dict[str, Any]) -> list[types.TextContent]:
     is_database = await _is_database(parent, parent_id)
 
     children = markdown.markdown_to_blocks(content) if content else None
-    db_properties = _build_db_properties(properties, title) if is_database else None
+
+    if is_database:
+        # Fetch database schema and format properties
+        db = await notion_api.get_database(parent_id)
+        schema = db.get("properties", {})
+        db_properties = _format_properties_for_db(properties or {}, schema, title)
+    else:
+        db_properties = None
 
     page = await notion_api.create_page(
         parent_id=parent_id,
@@ -235,14 +242,6 @@ async def _is_database(name: str, resolved_id: str) -> bool:
         return True
     except Exception:
         return False
-
-
-def _build_db_properties(properties: dict[str, Any] | None, title: str) -> dict[str, Any]:
-    """Build properties dict for database entry."""
-    props = properties or {}
-    if "Name" not in props and "title" not in props:
-        props["Name"] = {"title": [{"text": {"content": title}}]}
-    return props
 
 
 async def _handle_update_page(args: dict[str, Any]) -> list[types.TextContent]:
@@ -310,7 +309,7 @@ async def _handle_update_database(args: dict[str, Any]) -> list[types.TextConten
     return _text_response(f"Updated database {resolved_id}")
 
 
-# Property simplification
+# Property simplification (for reading)
 PROPERTY_EXTRACTORS: dict[str, Callable[[dict[str, Any]], Any]] = {
     "title": lambda p: "".join(t.get("plain_text", "") for t in p.get("title", [])),
     "rich_text": lambda p: "".join(t.get("plain_text", "") for t in p.get("rich_text", [])),
@@ -326,6 +325,79 @@ PROPERTY_EXTRACTORS: dict[str, Callable[[dict[str, Any]], Any]] = {
 }
 
 
+# Property formatting (for writing)
+def _format_title(value: Any) -> dict[str, Any]:
+    """Format a title property value."""
+    return {"title": [{"text": {"content": str(value)}}]}
+
+
+def _format_rich_text(value: Any) -> dict[str, Any]:
+    """Format a rich_text property value."""
+    return {"rich_text": [{"text": {"content": str(value)}}]}
+
+
+def _format_number(value: Any) -> dict[str, Any]:
+    """Format a number property value."""
+    return {"number": float(value) if value is not None else None}
+
+
+def _format_select(value: Any) -> dict[str, Any]:
+    """Format a select property value."""
+    return {"select": {"name": str(value)} if value else None}
+
+
+def _format_multi_select(value: Any) -> dict[str, Any]:
+    """Format a multi_select property value."""
+    if isinstance(value, list):
+        return {"multi_select": [{"name": str(v)} for v in value]}
+    return {"multi_select": [{"name": str(value)}]}
+
+
+def _format_date(value: Any) -> dict[str, Any]:
+    """Format a date property value."""
+    return {"date": {"start": str(value)} if value else None}
+
+
+def _format_checkbox(value: Any) -> dict[str, Any]:
+    """Format a checkbox property value."""
+    return {"checkbox": bool(value)}
+
+
+def _format_url(value: Any) -> dict[str, Any]:
+    """Format a url property value."""
+    return {"url": str(value) if value else None}
+
+
+def _format_email(value: Any) -> dict[str, Any]:
+    """Format an email property value."""
+    return {"email": str(value) if value else None}
+
+
+def _format_phone_number(value: Any) -> dict[str, Any]:
+    """Format a phone_number property value."""
+    return {"phone_number": str(value) if value else None}
+
+
+def _format_status(value: Any) -> dict[str, Any]:
+    """Format a status property value."""
+    return {"status": {"name": str(value)} if value else None}
+
+
+PROPERTY_FORMATTERS: dict[str, Callable[[Any], dict[str, Any]]] = {
+    "title": _format_title,
+    "rich_text": _format_rich_text,
+    "number": _format_number,
+    "select": _format_select,
+    "multi_select": _format_multi_select,
+    "date": _format_date,
+    "checkbox": _format_checkbox,
+    "url": _format_url,
+    "email": _format_email,
+    "phone_number": _format_phone_number,
+    "status": _format_status,
+}
+
+
 def _simplify_properties(properties: dict[str, Any]) -> dict[str, Any]:
     """Convert Notion properties to simple key-value pairs."""
     result = {}
@@ -334,6 +406,51 @@ def _simplify_properties(properties: dict[str, Any]) -> dict[str, Any]:
         extractor = PROPERTY_EXTRACTORS.get(prop_type)
         result[name] = extractor(prop) if extractor else f"[{prop_type}]"
     return result
+
+
+def _format_properties_for_db(
+    user_props: dict[str, Any],
+    schema: dict[str, Any],
+    title: str,
+) -> dict[str, Any]:
+    """Format user-provided properties to Notion format based on database schema."""
+    formatted: dict[str, Any] = {}
+    title_prop_name = None
+
+    # Find the title property in the schema
+    for prop_name, prop_def in schema.items():
+        if prop_def.get("type") == "title":
+            title_prop_name = prop_name
+            break
+
+    # Always set the title property
+    if title_prop_name:
+        formatted[title_prop_name] = _format_title(title)
+
+    # Format each user-provided property based on schema
+    for prop_name, value in user_props.items():
+        if prop_name == title_prop_name:
+            # Title already set above
+            continue
+
+        prop_def = schema.get(prop_name)
+        if not prop_def:
+            # Property not in schema, skip
+            continue
+
+        prop_type = prop_def.get("type", "")
+
+        # Check if value is already in Notion format (has type-specific key)
+        if isinstance(value, dict) and prop_type in value:
+            formatted[prop_name] = value
+            continue
+
+        # Format simple value to Notion format
+        formatter = PROPERTY_FORMATTERS.get(prop_type)
+        if formatter:
+            formatted[prop_name] = formatter(value)
+
+    return formatted
 
 
 # Tool dispatch
