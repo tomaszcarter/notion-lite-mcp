@@ -408,6 +408,65 @@ def _simplify_properties(properties: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _parse_expanded_properties(user_props: dict[str, Any]) -> dict[str, Any]:
+    """Parse expanded property formats like 'date:PropName:start' into normalized props.
+
+    Supports:
+    - date:PropName:start, date:PropName:end, date:PropName:is_datetime
+    - place:PropName:name, place:PropName:address, place:PropName:latitude, etc.
+    """
+    normalized: dict[str, Any] = {}
+    expanded: dict[str, dict[str, Any]] = {}  # {prop_name: {start: ..., end: ...}}
+
+    for key, value in user_props.items():
+        if key.startswith("date:"):
+            # Parse date:PropName:field format
+            parts = key.split(":", 2)
+            if len(parts) == 3:
+                _, prop_name, field = parts
+                if prop_name not in expanded:
+                    expanded[prop_name] = {"_type": "date"}
+                expanded[prop_name][field] = value
+            else:
+                normalized[key] = value
+        elif key.startswith("place:"):
+            # Parse place:PropName:field format
+            parts = key.split(":", 2)
+            if len(parts) == 3:
+                _, prop_name, field = parts
+                if prop_name not in expanded:
+                    expanded[prop_name] = {"_type": "place"}
+                expanded[prop_name][field] = value
+            else:
+                normalized[key] = value
+        else:
+            normalized[key] = value
+
+    # Convert expanded formats to Notion API format
+    for prop_name, fields in expanded.items():
+        prop_type = fields.pop("_type")
+        if prop_type == "date":
+            # Build date object: {"date": {"start": "...", "end": "..."}}
+            date_obj: dict[str, Any] = {}
+            if "start" in fields:
+                date_obj["start"] = fields["start"]
+            if "end" in fields:
+                date_obj["end"] = fields["end"]
+            # is_datetime is informational, not needed in API call
+            if date_obj:
+                normalized[prop_name] = {"date": date_obj}
+        elif prop_type == "place":
+            # Build place object
+            place_obj: dict[str, Any] = {}
+            for field in ["name", "address", "latitude", "longitude", "google_place_id"]:
+                if field in fields:
+                    place_obj[field] = fields[field]
+            if place_obj:
+                normalized[prop_name] = {"place": place_obj}
+
+    return normalized
+
+
 def _format_properties_for_db(
     user_props: dict[str, Any],
     schema: dict[str, Any],
@@ -416,6 +475,9 @@ def _format_properties_for_db(
     """Format user-provided properties to Notion format based on database schema."""
     formatted: dict[str, Any] = {}
     title_prop_name = None
+
+    # First, parse any expanded property formats (date:Prop:start, etc.)
+    normalized_props = _parse_expanded_properties(user_props)
 
     # Find the title property in the schema
     for prop_name, prop_def in schema.items():
@@ -428,7 +490,7 @@ def _format_properties_for_db(
         formatted[title_prop_name] = _format_title(title)
 
     # Format each user-provided property based on schema
-    for prop_name, value in user_props.items():
+    for prop_name, value in normalized_props.items():
         if prop_name == title_prop_name:
             # Title already set above
             continue

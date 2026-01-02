@@ -8,6 +8,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from server import (
     PROPERTY_FORMATTERS,
     _format_properties_for_db,
+    _parse_expanded_properties,
     _simplify_properties,
 )
 
@@ -165,6 +166,66 @@ class TestFormatPropertiesForDb:
         # Should use title param, not user's value (current behavior)
         # Title is always set from the title parameter
         assert result["Task Name"] == {"title": [{"text": {"content": "Default Title"}}]}
+
+
+class TestParseExpandedProperties:
+    """Tests for _parse_expanded_properties function."""
+
+    def test_parses_date_start(self):
+        """Parses date:PropName:start format."""
+        result = _parse_expanded_properties({
+            "date:Due Date:start": "2026-01-02",
+        })
+        assert result == {"Due Date": {"date": {"start": "2026-01-02"}}}
+
+    def test_parses_date_with_end(self):
+        """Parses date with both start and end."""
+        result = _parse_expanded_properties({
+            "date:Event:start": "2026-01-02",
+            "date:Event:end": "2026-01-05",
+        })
+        assert result == {"Event": {"date": {"start": "2026-01-02", "end": "2026-01-05"}}}
+
+    def test_ignores_is_datetime(self):
+        """is_datetime field is parsed but not included in output."""
+        result = _parse_expanded_properties({
+            "date:Date:start": "2026-01-02",
+            "date:Date:is_datetime": 0,
+        })
+        # is_datetime is informational, not part of API format
+        assert result == {"Date": {"date": {"start": "2026-01-02"}}}
+
+    def test_passes_through_regular_properties(self):
+        """Non-expanded properties are passed through unchanged."""
+        result = _parse_expanded_properties({
+            "Vendor": "Test",
+            "Amount": 42,
+        })
+        assert result == {"Vendor": "Test", "Amount": 42}
+
+    def test_mixed_properties(self):
+        """Handles mix of expanded and regular properties."""
+        result = _parse_expanded_properties({
+            "Vendor": "Test",
+            "date:Date:start": "2026-01-02",
+            "Amount": 99,
+        })
+        assert result == {
+            "Vendor": "Test",
+            "Date": {"date": {"start": "2026-01-02"}},
+            "Amount": 99,
+        }
+
+    def test_parses_place_properties(self):
+        """Parses place:PropName:field format."""
+        result = _parse_expanded_properties({
+            "place:Location:name": "Office",
+            "place:Location:latitude": 51.5,
+            "place:Location:longitude": -0.1,
+        })
+        assert result == {
+            "Location": {"place": {"name": "Office", "latitude": 51.5, "longitude": -0.1}}
+        }
 
 
 class TestSimplifyProperties:
