@@ -156,6 +156,16 @@ async def update_page(
     return await client.pages.update(**params)
 
 
+async def move_page(page_id: str, parent: dict[str, str]) -> dict[str, Any]:
+    """Move a page to a new parent (page or database)."""
+    client = get_client()
+    return await client.request(
+        path=f"pages/{page_id}/move",
+        method="POST",
+        body={"parent": parent},
+    )
+
+
 async def append_blocks(block_id: str, children: list[dict[str, Any]]) -> dict[str, Any]:
     """Append blocks to a page/block."""
     client = get_client()
@@ -178,7 +188,7 @@ async def query_database(
     client = get_client()
 
     # Resolve to data_source_id if needed
-    data_source_id = await _resolve_data_source_id(database_id)
+    data_source_id = await resolve_data_source_id(database_id)
 
     results: list[dict[str, Any]] = []
     cursor = None
@@ -195,7 +205,7 @@ async def query_database(
     return results[:limit]
 
 
-async def _resolve_data_source_id(database_id: str) -> str:
+async def resolve_data_source_id(database_id: str) -> str:
     """Resolve a database_id to its data_source_id."""
     client = get_client()
 

@@ -81,6 +81,18 @@ TOOLS = [
         },
     ),
     types.Tool(
+        name="move_page",
+        description="Move a page to a different parent page or database.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "description": "Page ID or cached name to move"},
+                "parent_id": {"type": "string", "description": "Target parent page/database ID or cached name"},
+            },
+            "required": ["id", "parent_id"],
+        },
+    ),
+    types.Tool(
         name="delete_page",
         description="Archive page.",
         inputSchema={
@@ -284,6 +296,29 @@ async def _handle_update_page(args: dict[str, Any]) -> list[types.TextContent]:
         await notion_api.append_blocks(resolved_id, blocks)
 
     return _text_response(f"Updated page {resolved_id}")
+
+
+async def _handle_move_page(args: dict[str, Any]) -> list[types.TextContent]:
+    """Move a page to a different parent."""
+    page_id = args.get("id", "")
+    parent_id = args.get("parent_id", "")
+
+    if not page_id or not parent_id:
+        raise ValueError("id and parent_id are required")
+
+    resolved_page_id = await cache.resolve_id(page_id)
+    resolved_parent_id = await cache.resolve_id(parent_id)
+
+    # Determine if target parent is a database
+    is_db = await _is_database(parent_id, resolved_parent_id)
+    if is_db:
+        data_source_id = await notion_api.resolve_data_source_id(resolved_parent_id)
+        parent = {"type": "data_source_id", "data_source_id": data_source_id}
+    else:
+        parent = {"type": "page_id", "page_id": resolved_parent_id}
+
+    await notion_api.move_page(resolved_page_id, parent)
+    return _text_response(f"Moved page {resolved_page_id} to {resolved_parent_id}")
 
 
 async def _handle_delete_page(args: dict[str, Any]) -> list[types.TextContent]:
@@ -542,6 +577,7 @@ TOOL_HANDLERS: dict[str, Callable[[dict[str, Any]], Coroutine[Any, Any, list[typ
     "get_page": _handle_get_page,
     "create_page": _handle_create_page,
     "update_page": _handle_update_page,
+    "move_page": _handle_move_page,
     "delete_page": _handle_delete_page,
     "query_database": _handle_query_database,
     "update_database": _handle_update_database,
