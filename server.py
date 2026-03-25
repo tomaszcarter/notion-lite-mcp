@@ -73,6 +73,7 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "id": {"type": "string", "description": "Page ID or cached name"},
+                "title": {"type": "string", "description": "New page title"},
                 "properties": {"type": "object", "description": "Properties to update"},
                 "append": {"type": "string", "description": "Markdown content to append"},
             },
@@ -244,9 +245,19 @@ async def _is_database(name: str, resolved_id: str) -> bool:
         return False
 
 
+def _find_title_property_key(page: dict[str, Any]) -> str:
+    """Find the title property key from a page's properties."""
+    properties = page.get("properties", {})
+    for key, value in properties.items():
+        if isinstance(value, dict) and value.get("type") == "title":
+            return key
+    return "title"
+
+
 async def _handle_update_page(args: dict[str, Any]) -> list[types.TextContent]:
     """Update page properties or append content."""
     page_id = args.get("id", "")
+    title = args.get("title")
     properties = args.get("properties")
     append_content = args.get("append")
 
@@ -254,6 +265,16 @@ async def _handle_update_page(args: dict[str, Any]) -> list[types.TextContent]:
         raise ValueError("id is required")
 
     resolved_id = await cache.resolve_id(page_id)
+
+    if title:
+        # Find the title property key from the page's existing properties
+        page = await notion_api.get_page(resolved_id)
+        title_key = _find_title_property_key(page)
+        title_value = {"title": [{"text": {"content": title}}]}
+        if properties:
+            properties[title_key] = title_value
+        else:
+            properties = {title_key: title_value}
 
     if properties:
         await notion_api.update_page(resolved_id, properties)

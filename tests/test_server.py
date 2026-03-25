@@ -7,6 +7,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from server import (
     PROPERTY_FORMATTERS,
+    _find_title_property_key,
     _format_properties_for_db,
     _parse_expanded_properties,
     _simplify_properties,
@@ -226,6 +227,32 @@ class TestParseExpandedProperties:
         assert result == {
             "Location": {"place": {"name": "Office", "latitude": 51.5, "longitude": -0.1}}
         }
+
+
+class TestFindTitlePropertyKey:
+    """Tests for _find_title_property_key function."""
+
+    def test_finds_title_type_property(self):
+        """Finds the property key with type 'title'."""
+        page = {"properties": {"Name": {"type": "title", "title": []}}}
+        assert _find_title_property_key(page) == "Name"
+
+    def test_finds_custom_title_key(self):
+        """Finds title property even with non-standard key name."""
+        page = {"properties": {
+            "Status": {"type": "select", "select": None},
+            "Task Name": {"type": "title", "title": []},
+        }}
+        assert _find_title_property_key(page) == "Task Name"
+
+    def test_defaults_to_title_when_missing(self):
+        """Falls back to 'title' when no title-type property found."""
+        page = {"properties": {}}
+        assert _find_title_property_key(page) == "title"
+
+    def test_handles_empty_page(self):
+        """Handles page with no properties."""
+        assert _find_title_property_key({}) == "title"
 
 
 class TestSimplifyProperties:
