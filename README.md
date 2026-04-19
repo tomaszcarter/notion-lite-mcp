@@ -138,6 +138,19 @@ cp config.yaml.example config.yaml
 export NOTION_API_KEY=secret_xxx
 ```
 
+## Role-based tool subsetting
+
+Set `NOTION_LITE_ROLE` to expose only the tools a given use case needs, cutting context further.
+
+| Role | Tools |
+|------|-------|
+| `reader` | search, get_page, query_database |
+| `writer` | search, get_page, create_page |
+| `editor` | search, get_page, create_page, update_page, delete_page, query_database |
+| `admin` / `full` (default) | all tools |
+
+Unknown role values fall back to `full` with a stderr warning.
+
 ## Claude Code Integration
 
 ```json
@@ -146,7 +159,7 @@ export NOTION_API_KEY=secret_xxx
     "notion-lite": {
       "command": "~/.claude-mcps/notion-lite/venv/bin/python",
       "args": ["~/.claude-mcps/notion-lite/server.py"],
-      "env": { "NOTION_API_KEY": "secret_xxx" }
+      "env": { "NOTION_API_KEY": "secret_xxx", "NOTION_LITE_ROLE": "writer" }
     }
   }
 }

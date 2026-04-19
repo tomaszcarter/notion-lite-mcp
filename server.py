@@ -6,6 +6,8 @@ Minimal Notion MCP for email processing. ~1.5k tokens instead of ~38k.
 
 import asyncio
 import json
+import os
+import sys
 from typing import Any, Callable, Coroutine
 
 import mcp.server.stdio
@@ -22,6 +24,32 @@ SERVER_NAME = "notion-lite"
 SERVER_VERSION = "1.0.0"
 MAX_SEARCH_RESULTS = 10
 DEFAULT_QUERY_LIMIT = 100
+
+# Role-based tool subsetting. Set NOTION_LITE_ROLE to narrow the exposed tool
+# surface; unset or "full" exposes everything.
+ROLE_TOOLS: dict[str, set[str] | None] = {
+    "reader": {"search", "get_page", "query_database"},
+    "writer": {"search", "get_page", "create_page"},
+    "editor": {"search", "get_page", "create_page", "update_page", "delete_page", "query_database"},
+    "admin": None,  # all tools
+    "full": None,  # all tools
+}
+
+
+def _resolve_role() -> str:
+    role = os.environ.get("NOTION_LITE_ROLE", "full")
+    if role not in ROLE_TOOLS:
+        print(f"Warning: Unknown NOTION_LITE_ROLE '{role}', using 'full'", file=sys.stderr)
+        return "full"
+    return role
+
+
+def _allowed_tool_names(role: str) -> set[str] | None:
+    """Return the set of tool names allowed for `role`, or None for all."""
+    return ROLE_TOOLS.get(role)
+
+
+ROLE = _resolve_role()
 
 server = Server(SERVER_NAME)
 _cache_initialized = False
@@ -584,10 +612,17 @@ TOOL_HANDLERS: dict[str, Callable[[dict[str, Any]], Coroutine[Any, Any, list[typ
 }
 
 
+def _filter_tools_for_role(tools: list[types.Tool], role: str) -> list[types.Tool]:
+    allowed = _allowed_tool_names(role)
+    if allowed is None:
+        return tools
+    return [t for t in tools if t.name in allowed]
+
+
 @server.list_tools()
 async def handle_list_tools() -> list[types.Tool]:
-    """List available Notion tools."""
-    return TOOLS
+    """List available Notion tools, filtered by NOTION_LITE_ROLE."""
+    return _filter_tools_for_role(TOOLS, ROLE)
 
 
 @server.call_tool()
@@ -598,6 +633,10 @@ async def handle_call_tool(name: str, arguments: dict[str, Any] | None) -> list[
     if not arguments:
         raise ValueError("No arguments provided")
 
+    allowed = _allowed_tool_names(ROLE)
+    if allowed is not None and name not in allowed:
+        raise ValueError(f"Tool '{name}' not available for role '{ROLE}'")
+
     handler = TOOL_HANDLERS.get(name)
     if not handler:
         raise ValueError(f"Unknown tool: {name}")
@@ -607,6 +646,8 @@ async def handle_call_tool(name: str, arguments: dict[str, Any] | None) -> list[
 
 async def main():
     """Start the MCP server."""
+    tool_count = len(_filter_tools_for_role(TOOLS, ROLE))
+    print(f"notion-lite MCP starting with role: {ROLE} ({tool_count} tools)", file=sys.stderr)
     async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
         await server.run(
             read_stream,
