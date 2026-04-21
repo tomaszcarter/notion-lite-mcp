@@ -1,15 +1,66 @@
 """Notion API client wrapper."""
 
+import asyncio
 import os
-from typing import Any
+from collections.abc import Awaitable, Callable
+from typing import Any, TypeVar
 
 from notion_client import AsyncClient
+from notion_client.errors import (
+    APIResponseError,
+    HTTPResponseError,
+    RequestTimeoutError,
+)
 
 # Constants
 ENV_API_KEY = "NOTION_API_KEY"
 DEFAULT_TITLE_PROPERTY = "Name"
 
+# Retry config for transient network / rate-limit failures.
+RETRY_MAX_ATTEMPTS = 3
+RETRY_BASE_DELAY_S = 0.5
+
+# Notion API error codes that are worth retrying. Anything else (validation,
+# object_not_found, unauthorized) is permanent and should surface immediately.
+_TRANSIENT_API_CODES = frozenset({
+    "rate_limited",
+    "service_unavailable",
+    "internal_server_error",
+    "conflict_error",
+})
+
+T = TypeVar("T")
+
 _client: AsyncClient | None = None
+
+
+def _is_transient(err: BaseException) -> bool:
+    """Return True if an error is worth retrying."""
+    if isinstance(err, (RequestTimeoutError,)):
+        return True
+    if isinstance(err, APIResponseError):
+        return getattr(err, "code", None) in _TRANSIENT_API_CODES
+    if isinstance(err, HTTPResponseError):
+        status = getattr(err, "status", None)
+        return status is None or status >= 500
+    return False
+
+
+async def _retry_with_backoff(
+    fn: Callable[[], Awaitable[T]],
+    max_attempts: int = RETRY_MAX_ATTEMPTS,
+    base_delay: float = RETRY_BASE_DELAY_S,
+) -> T:
+    """Call an async fn, retrying transient errors with exponential backoff."""
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            return await fn()
+        except Exception as err:
+            if attempt >= max_attempts or not _is_transient(err):
+                raise
+            await asyncio.sleep(base_delay * (2 ** (attempt - 1)))
 
 
 def get_client() -> AsyncClient:
@@ -39,20 +90,36 @@ async def search(query: str, filter_type: str | None = None) -> list[dict[str, A
 
 
 async def get_page(page_id: str) -> dict[str, Any]:
-    """Get page metadata."""
+    """Get page metadata. Retries transient failures; propagates permanent ones."""
     client = get_client()
-    return await client.pages.retrieve(page_id=page_id)
+    return await _retry_with_backoff(lambda: client.pages.retrieve(page_id=page_id))
 
 
 async def get_blocks(block_id: str) -> list[dict[str, Any]]:
-    """Get all child blocks of a page/block with pagination."""
+    """Get all child blocks of a page/block with pagination.
+
+    Each pagination request is retried on transient failures. Permanent errors
+    propagate so callers can decide how to surface them (e.g. partial content
+    with an error flag) rather than silently substituting placeholders.
+    """
     client = get_client()
     return await _paginate(
-        lambda cursor: client.blocks.children.list(
-            block_id=block_id,
-            **({"start_cursor": cursor} if cursor else {}),
+        lambda cursor: _retry_with_backoff(
+            lambda: client.blocks.children.list(
+                block_id=block_id,
+                **({"start_cursor": cursor} if cursor else {}),
+            )
         )
     )
+
+
+def extract_parent_id(page: dict[str, Any]) -> str | None:
+    """Extract the parent ID from a Notion page object, or None for workspace-root."""
+    parent = page.get("parent") or {}
+    parent_type = parent.get("type")
+    if not parent_type or parent_type == "workspace":
+        return None
+    return parent.get(parent_type)
 
 
 async def _paginate(fetch_page) -> list[dict[str, Any]]:

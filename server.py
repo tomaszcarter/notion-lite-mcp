@@ -218,21 +218,43 @@ def _format_search_result(item: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _handle_get_page(args: dict[str, Any]) -> list[types.TextContent]:
-    """Get page content."""
+    """Get page content.
+
+    Always surfaces page metadata (title, parent_id, archived flag) from the
+    page-retrieve call, even if the subsequent block fetch fails. This lets
+    callers reason about the page (e.g. detect archived duplicates) without
+    being misled by silently substituted placeholder content.
+    """
     page_id = args.get("id", "")
     if not page_id:
         raise ValueError("id is required")
 
     resolved_id = await cache.resolve_id(page_id)
     page = await notion_api.get_page(resolved_id)
-    blocks = await notion_api.get_blocks(resolved_id)
 
-    return _json_response({
+    archived = bool(page.get("archived") or page.get("in_trash"))
+    response: dict[str, Any] = {
         "id": resolved_id,
         "title": markdown.extract_title(page),
         "url": page.get("url", ""),
-        "content": markdown.blocks_to_markdown(blocks),
-    })
+        "parent_id": notion_api.extract_parent_id(page),
+        "archived": archived,
+    }
+
+    # Archived pages frequently can't have their blocks read; skip the fetch
+    # and let the caller decide what to do based on the archived flag.
+    if archived:
+        response["content"] = ""
+        return _json_response(response)
+
+    try:
+        blocks = await notion_api.get_blocks(resolved_id)
+        response["content"] = markdown.blocks_to_markdown(blocks)
+    except Exception as err:
+        response["content"] = ""
+        response["block_fetch_error"] = f"{type(err).__name__}: {err}"
+
+    return _json_response(response)
 
 
 async def _handle_create_page(args: dict[str, Any]) -> list[types.TextContent]:
