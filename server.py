@@ -6,6 +6,7 @@ Minimal Notion MCP for email processing. ~1.5k tokens instead of ~38k.
 
 import asyncio
 import json
+import mimetypes
 import os
 import sys
 from typing import Any, Callable, Coroutine
@@ -30,7 +31,7 @@ DEFAULT_QUERY_LIMIT = 100
 ROLE_TOOLS: dict[str, set[str] | None] = {
     "reader": {"search", "get_page", "query_database"},
     "writer": {"search", "get_page", "create_page"},
-    "editor": {"search", "get_page", "create_page", "update_page", "delete_page", "query_database"},
+    "editor": {"search", "get_page", "create_page", "update_page", "delete_page", "query_database", "embed_image"},
     "admin": None,  # all tools
     "full": None,  # all tools
 }
@@ -153,6 +154,19 @@ TOOLS = [
                 "properties": {"type": "object", "description": "Properties schema to update"},
             },
             "required": ["id"],
+        },
+    ),
+    types.Tool(
+        name="embed_image",
+        description="Embed a local image file into a page. Uploads it to Notion (Notion hosts it — durable, no expiring URL) and appends an image block.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "page_id": {"type": "string", "description": "Page ID or cached name to append the image to"},
+                "image_path": {"type": "string", "description": "Path to a local image file (png, jpg, gif, webp, svg)"},
+                "caption": {"type": "string", "description": "Optional caption text for the image"},
+            },
+            "required": ["page_id", "image_path"],
         },
     ),
 ]
@@ -415,6 +429,57 @@ async def _handle_update_database(args: dict[str, Any]) -> list[types.TextConten
     return _text_response(f"Updated database {resolved_id}")
 
 
+def _build_image_block(file_upload_id: str, caption: str | None) -> dict[str, Any]:
+    """Build a Notion image block that references an uploaded file."""
+    image: dict[str, Any] = {
+        "type": "file_upload",
+        "file_upload": {"id": file_upload_id},
+    }
+    if caption:
+        image["caption"] = [{"type": "text", "text": {"content": caption}}]
+    return {"type": "image", "image": image}
+
+
+async def _handle_embed_image(args: dict[str, Any]) -> list[types.TextContent]:
+    """Upload a local image to Notion and append it as an image block."""
+    page_id = args.get("page_id", "")
+    image_path = args.get("image_path", "")
+    caption = args.get("caption")
+
+    if not page_id or not image_path:
+        raise ValueError("page_id and image_path are required")
+
+    path = os.path.expanduser(image_path)
+    if not os.path.isfile(path):
+        raise ValueError(f"image file not found: {path}")
+
+    content_type, _ = mimetypes.guess_type(path)
+    if not content_type or not content_type.startswith("image/"):
+        raise ValueError(f"not an image file (detected type: {content_type}): {path}")
+
+    size = os.path.getsize(path)
+    if size > notion_api.SINGLE_PART_MAX_BYTES:
+        raise ValueError(
+            f"image is {size} bytes; exceeds Notion's single-part upload limit "
+            f"of {notion_api.SINGLE_PART_MAX_BYTES} bytes"
+        )
+
+    with open(path, "rb") as f:
+        data = f.read()
+
+    resolved_id = await cache.resolve_id(page_id)
+    filename = os.path.basename(path)
+
+    upload_id = await notion_api.upload_file(filename, content_type, data)
+    block = _build_image_block(upload_id, caption)
+    await notion_api.append_blocks(resolved_id, [block])
+
+    result = {"page_id": resolved_id, "file_upload_id": upload_id, "filename": filename}
+    return _text_response(
+        f"Embedded image {filename} in page {resolved_id}\n\n" + json.dumps(result, indent=2)
+    )
+
+
 # Property simplification (for reading)
 PROPERTY_EXTRACTORS: dict[str, Callable[[dict[str, Any]], Any]] = {
     "title": lambda p: "".join(t.get("plain_text", "") for t in p.get("title", [])),
@@ -631,6 +696,7 @@ TOOL_HANDLERS: dict[str, Callable[[dict[str, Any]], Coroutine[Any, Any, list[typ
     "delete_page": _handle_delete_page,
     "query_database": _handle_query_database,
     "update_database": _handle_update_database,
+    "embed_image": _handle_embed_image,
 }
 
 

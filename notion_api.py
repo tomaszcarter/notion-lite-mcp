@@ -239,6 +239,39 @@ async def append_blocks(block_id: str, children: list[dict[str, Any]]) -> dict[s
     return await client.blocks.children.append(block_id=block_id, children=children)
 
 
+# Notion's File Upload API caps a single-part upload at 20 MiB. Larger files
+# need the multi-part flow, which we deliberately don't build in v1 — the images
+# agents produce (diagrams, maps, charts) sit well under this.
+SINGLE_PART_MAX_BYTES = 20 * 1024 * 1024
+
+
+async def upload_file(filename: str, content_type: str, data: bytes) -> str:
+    """Upload a file to Notion via the File Upload API and return its id.
+
+    Two-step, single-part flow: create the upload object, then send the bytes.
+    The returned file_upload id can be referenced from a block (e.g. an image
+    block) so Notion hosts the file itself — no external URL, no expiry.
+    """
+    client = get_client()
+
+    upload = await _retry_with_backoff(
+        lambda: client.file_uploads.create(
+            mode="single_part",
+            filename=filename,
+            content_type=content_type,
+        )
+    )
+    upload_id = upload["id"]
+
+    await _retry_with_backoff(
+        lambda: client.file_uploads.send(
+            file_upload_id=upload_id,
+            file=(filename, data, content_type),
+        )
+    )
+    return upload_id
+
+
 async def delete_block(block_id: str) -> dict[str, Any]:
     """Archive/delete a block (or page)."""
     client = get_client()

@@ -58,6 +58,15 @@ Update database schema.
 Params: id (string), title (string), properties (object)
 ```
 
+### 9. embed_image
+```
+Embed a local image file into a page. Uploads it to Notion via the File Upload
+API — Notion hosts the file itself (durable, no external URL, no expiry) — then
+appends an image block. Images only (png/jpg/gif/webp/svg), single-part upload
+up to 20 MiB.
+Params: page_id (string), image_path (string - local file path), caption (string, optional)
+```
+
 ## Cache
 
 SQLite at `~/.notion-lite/cache.db` for fast lookups of known pages:
@@ -97,6 +106,7 @@ That's it. No tables, callouts, toggles, colors, or anything fancy.
 - `DELETE /v1/blocks/{id}`
 - `POST /v1/databases/{id}/query`
 - `PATCH /v1/databases/{id}`
+- `POST /v1/file_uploads` (create) + `POST /v1/file_uploads/{id}/send` (embed_image)
 
 Ref: https://developers.notion.com/reference
 
@@ -146,7 +156,7 @@ Set `NOTION_LITE_ROLE` to expose only the tools a given use case needs, cutting 
 |------|-------|
 | `reader` | search, get_page, query_database |
 | `writer` | search, get_page, create_page |
-| `editor` | search, get_page, create_page, update_page, delete_page, query_database |
+| `editor` | search, get_page, create_page, update_page, delete_page, query_database, embed_image |
 | `admin` / `full` (default) | all tools |
 
 Unknown role values fall back to `full` with a stderr warning.

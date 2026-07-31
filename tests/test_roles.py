@@ -23,6 +23,7 @@ class TestRoleMapping:
             "update_page",
             "delete_page",
             "query_database",
+            "embed_image",
         }
 
     def test_admin_is_unrestricted(self):
